@@ -95,16 +95,52 @@ Checked 2026-09-24 against downloads.openwrt.org.
   `armsr/armv8` target, which runs natively on ARM via Apple's Hypervisor framework.
   Image: `openwrt-25.12.5-armsr-armv8-generic-ext4-combined-efi.img.gz`.
 
-## Blocking unknown
+## Blocking unknown — RESOLVED 2026-09-24
 
 **Is the OpenWrt Squid 7.1 package compiled with `--with-openssl` and `ssl_bump`?**
 
-This cannot be determined from the package index, and the entire design depends on it.
-Historically OpenWrt shipped Squid without SSL support. Resolving this is the first
-objective of the VM stage, before any hardware is purchased.
+**Yes.** Verified in the QEMU VM on OpenWrt 25.12.5 armsr/armv8. `apk add squid` pulls in
+`libopenssl3`, and `squid -v` reports:
 
-If the answer is no, the fallback options are: build a custom Squid via the OpenWrt SDK,
-substitute another TLS-intercepting proxy, or reconsider the approach entirely.
+```
+'--with-openssl=/builder/.../target-aarch64_generic_musl/usr'
+'--enable-ssl-crtd'
+'--without-gnutls'
+```
+
+`--enable-ssl-crtd` means the dynamic certificate generator is included;
+`/usr/lib/squid/security_file_certgen` is present in the package.
+
+Proven further than the flags: a full interception config parses cleanly and loads the
+CA. `squid -k parse` exits 0 on
+
+```
+https_port 3130 intercept ssl-bump generate-host-certificates=on \
+    dynamic_cert_mem_cache_size=4MB \
+    tls-cert=/etc/squid/ssl/ca.crt tls-key=/etc/squid/ssl/ca.key
+sslcrtd_program /usr/lib/squid/security_file_certgen -s /var/cache/squid/ssl_db -M 4MB
+acl gsearch ssl::server_name .google.com
+ssl_bump peek all
+ssl_bump bump gsearch
+ssl_bump splice all
+```
+
+reporting `Loaded signing certificate: /CN=School Filter CA`.
+
+A CA with X.509 name constraints also generates correctly on-device with the
+`openssl-util` package, confirming the *generation* half of that design decision:
+
+```
+X509v3 Name Constraints: critical
+    Permitted:
+      DNS:.google.com
+      DNS:.google.co.uk
+```
+
+Whether client devices *honor* those constraints on a user-installed CA remains open
+(open question 5).
+
+**No hardware fallback is needed. The design is viable on stock OpenWrt packages.**
 
 ## Development stages
 
@@ -138,9 +174,21 @@ recognize it. Worth revisiting only if memory proves tight.
 The test cases live in a language-agnostic TSV so that the table -- the empirically
 derived, hard-to-replace part -- survives a reimplementation in another language.
 
-### Stage 1 — OpenWrt VM
+### Stage 1 — OpenWrt VM — DONE 2026-09-24
 
-`brew install qemu`; boot `armsr/armv8` under QEMU with HVF acceleration.
+`brew install qemu`; boot `armsr/armv8` under QEMU with HVF acceleration. Automated by
+`scripts/run-vm.sh`, which downloads the image, verifies it against OpenWrt's published
+`sha256sums`, and boots it. Verified working on an Apple M2 with QEMU 11.1.1.
+
+Note: the `armsr` image bridges `eth0` into `br-lan` with a static 192.168.1.1, so it has
+no route out under QEMU user-mode networking until the LAN is switched to DHCP:
+
+```
+uci set network.lan.proto='dhcp'
+uci -q delete network.lan.ipaddr
+uci -q delete network.lan.netmask
+uci commit network && /etc/init.d/network restart
+```
 
 **Decided 2026-09-24: QEMU from the command line, not UTM.** The VM is defined by a
 committed shell script (`scripts/run-vm.sh`), which makes the environment reproducible by

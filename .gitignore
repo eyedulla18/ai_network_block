@@ -8,3 +8,6 @@ ca/
 certs/
 
 .DS_Store
+
+# QEMU disk images and downloads
+.vm/
