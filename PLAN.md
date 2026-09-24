@@ -201,11 +201,54 @@ network settings.
 
 First task: run `squid -v` and settle the blocking unknown above.
 
-### Stage 2 — client behind the filter
+### Stage 2a — explicit proxy, one VM — DONE 2026-09-25
 
-A second VM on a QEMU socket network, sitting behind the filter so real traffic crosses
-it. `curl` is preferred over a browser initially: request headers such as
-`Sec-Fetch-Mode` can be set by hand, which tests Open Question 2 directly.
+Split out of Stage 2 so that failures are diagnosable: explicit-proxy mode has three
+failure points rather than the six of full transparent interception.
+
+**The whole chain works against live Google.** With `udm14.lua` installed at
+`/usr/bin/udm14.lua` and the config in `squid/squid.conf`:
+
+```
+$ curl -i --proxy http://127.0.0.1:3128 --cacert ca.crt \
+      'https://www.google.com/search?q=photosynthesis&udm=50&tbm=isch'
+HTTP/1.1 200 Connection established
+HTTP/1.1 302 Found
+Location: https://www.google.com/search?q=photosynthesis&udm=14
+```
+
+Instagram through the same proxy returns 200 **without** the custom CA, confirming
+spliced traffic is untouched.
+
+**Open question 2 is half-answered.** `url_rewrite_extras "sfm=%{Sec-Fetch-Mode}>h"`
+works; the header reaches the helper as `sfm=navigate`, or `sfm=-` when absent. The
+design for background requests is therefore implementable. What is still unknown is what
+Google's background requests actually look like -- `curl` fetches no subresources, so
+that needs a real browser, not a VM.
+
+Findings, all recorded in `squid/SETUP-NOTES.md`:
+
+1. **The draft Squid config in this plan was wrong.** `ssl_bump peek all` matches again
+   at step 2, and after peeking at step 2 Squid can only splice, so the bump rule is
+   never reached. Every request was tunnelled (`TCP_TUNNEL/200` in `access.log`) and the
+   filter silently did nothing. The fix is `acl step1 at_step SslBump1` plus
+   `ssl_bump peek step1`. This is the most dangerous failure mode found so far because
+   nothing errors.
+2. Squid runs as `nobody`, not `squid`; the log dir and `ssl_db` need that ownership.
+3. `/var` is a symlink to `/tmp` (tmpfs), so `ssl_db` is destroyed on every reboot and
+   Squid will not start without it. The setup script must recreate it at boot.
+4. Stale `/dev/shm/squid-*` segments turn any abnormal exit into a procd crash loop.
+5. **Squid calls the rewriter for CONNECT as well as GET**, passing `host:port` rather
+   than a URL. The helper must ignore those; `cases.tsv` now covers it.
+6. **mbedTLS cannot parse a CA whose `nameConstraints` extension is critical** (error
+   `-0x2562`). Non-critical parses fine. Relevant to open question 5, though it is an
+   mbedTLS data point and browsers use other TLS stacks.
+
+### Stage 2b — transparent interception, two VMs
+
+A second VM on a QEMU socket network, sitting behind the filter so traffic is intercepted
+rather than explicitly proxied. Adds the nftables redirects, the QUIC drop and the DNS
+redirect, and answers what a device without the CA actually experiences.
 
 ### Stage 3 — certificate distribution and portal
 

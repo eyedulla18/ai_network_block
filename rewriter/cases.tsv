@@ -76,3 +76,10 @@ https://wwwXgoogle.com/search?q=x	SKIP	-
 https://www.google.com:443/search?q=photosynthesis&udm=14	PASS	-
 https://evilgoogle.com/search?q=x	SKIP	-
 https://www.google.a/search?q=x	SKIP	-
+
+# --- CONNECT requests -----------------------------------------------------
+# Squid calls url_rewrite_program for CONNECT too, passing "host:port" rather
+# than a URL. Observed 2026-09-25 in the VM. These must be left alone.
+www.google.com:443	SKIP	-
+www.instagram.com:443	SKIP	-
+google.com:443	SKIP	-
