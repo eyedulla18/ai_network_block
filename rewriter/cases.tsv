@@ -1,0 +1,78 @@
+# Test cases for the Google search URL canonicalizer.
+#
+# Deliberately language-agnostic: three tab-separated columns, so the same
+# cases can be run against a reimplementation in any language if Lua ever
+# proves to be the wrong choice for the target.
+#
+#   input_url <TAB> expected_action <TAB> expected_url
+#
+# expected_action is SKIP, PASS or REWRITE. expected_url is "-" unless the
+# action is REWRITE.
+#
+# Rows marked [observed] correspond directly to a row of the Google behavior
+# table in PLAN.md, tested 2026-09-24.
+
+# --- [observed] the behavior table ---------------------------------------
+https://www.google.com/search?q=photosynthesis	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=14	PASS	-
+https://www.google.com/search?q=photosynthesis&udm=14&udm=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=50&udm=14	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=2&udm=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=50&udm=2	REWRITE	https://www.google.com/search?q=photosynthesis&udm=2
+https://www.google.com/search?q=photosynthesis&udm=14&udm=2	REWRITE	https://www.google.com/search?q=photosynthesis&udm=2
+https://www.google.com/search?q=photosynthesis&udm=abc	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=14&udm=abc	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&tbm=isch&udm=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=14&tbm=isch	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=14&%75dm=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=14&udm=%35%30	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&UDM=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+
+# --- AI Mode must never survive, however it is spelled -------------------
+https://www.google.com/search?q=photosynthesis&udm=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&%75%64%6D=50	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=5%30	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?udm=50	REWRITE	https://www.google.com/search?q=&udm=14
+
+# --- other allowed tabs are preserved ------------------------------------
+https://www.google.com/search?q=photosynthesis&udm=2	PASS	-
+https://www.google.com/search?q=photosynthesis&udm=36	PASS	-
+https://www.google.com/search?q=photosynthesis&udm=99	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=014	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+
+# --- pagination -----------------------------------------------------------
+https://www.google.com/search?q=photosynthesis&udm=14&start=10	PASS	-
+https://www.google.com/search?q=photosynthesis&start=10	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14&start=10
+https://www.google.com/search?q=photosynthesis&udm=14&start=abc	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&udm=14&start=10&start=20	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14&start=20
+
+# --- tracking parameters are stripped ------------------------------------
+https://www.google.com/search?q=photosynthesis&udm=14&sxsrf=ABC123	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+https://www.google.com/search?q=photosynthesis&ei=xyz&ved=2ahUKEwi&udm=14	REWRITE	https://www.google.com/search?q=photosynthesis&udm=14
+
+# --- query encoding -------------------------------------------------------
+https://www.google.com/search?q=how+does+photosynthesis+work	REWRITE	https://www.google.com/search?q=how%20does%20photosynthesis%20work&udm=14
+https://www.google.com/search?q=how%20does%20photosynthesis%20work&udm=14	PASS	-
+https://www.google.com/search?q=a%26b&udm=14	PASS	-
+https://www.google.com/search?q=C%2B%2B&udm=14	PASS	-
+https://www.google.com/search?q=caf%C3%A9&udm=50	REWRITE	https://www.google.com/search?q=caf%C3%A9&udm=14
+
+# --- host and path matching ----------------------------------------------
+https://www.google.co.uk/search?q=photosynthesis	REWRITE	https://www.google.co.uk/search?q=photosynthesis&udm=14
+https://google.com/search?q=photosynthesis&udm=50	REWRITE	https://google.com/search?q=photosynthesis&udm=14
+https://www.google.vu/search?q=photosynthesis&udm=14	PASS	-
+https://www.google.com/maps?q=photosynthesis	SKIP	-
+https://www.google.com/	SKIP	-
+https://www.google.com/searching?q=photosynthesis	SKIP	-
+https://www.notgoogle.com/search?q=photosynthesis&udm=50	SKIP	-
+https://www.google.com.evil.example/search?q=x	SKIP	-
+https://duckduckgo.com/?q=photosynthesis	SKIP	-
+https://www.google.com.au/search?q=photosynthesis&udm=14	PASS	-
+https://www.google.co.jp/search?q=photosynthesis&udm=50	REWRITE	https://www.google.co.jp/search?q=photosynthesis&udm=14
+https://google.com.evil.example/search?q=x	SKIP	-
+https://www.google.co.uk.evil.example/search?q=x	SKIP	-
+https://wwwXgoogle.com/search?q=x	SKIP	-
+https://www.google.com:443/search?q=photosynthesis&udm=14	PASS	-
+https://evilgoogle.com/search?q=x	SKIP	-
+https://www.google.a/search?q=x	SKIP	-

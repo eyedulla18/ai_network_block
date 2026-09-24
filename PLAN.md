@@ -108,11 +108,35 @@ substitute another TLS-intercepting proxy, or reconsider the approach entirely.
 
 ## Development stages
 
-### Stage 0 — URL rewriter (no VM required)
+### Stage 0 — URL rewriter (no VM required) — DONE 2026-09-24
 
-Build the Lua canonicalizer and its unit-test table, running locally on macOS via
-`brew install lua`. Every row of the observed-behavior table below becomes a test case.
-This is the highest-value component and is independent of all hardware decisions.
+Implemented in `rewriter/`. 51 cases pass, including every row of the observed-behavior
+table below, plus loop-safety assertions on every rewrite. Runs on macOS with
+`brew install lua@5.4`; no VM or hardware needed.
+
+Two findings from building it:
+
+- The `lua5.4` package installs **`/usr/bin/lua5.4`**, with no `/usr/bin/lua` symlink
+  (confirmed from the package Makefile). The shebang must name it exactly.
+- Host matching needs to be strict. A pattern permissive enough to accept `google.co.uk`
+  also accepts `google.com.evil.example`; the first implementation had this bug and a
+  test case now pins it.
+
+**Language choice: Lua 5.4.** Squid runs the rewriter as a pool of long-lived child
+processes (`url_rewrite_children`, commonly 20), so per-process memory is the binding
+constraint on a 1 GB box already running Squid with TLS interception and AdGuard Home.
+Lua is roughly 1 MB resident per process against roughly 10-15 MB for Python *(estimates;
+measure at Stage 1)*. Disk is not the argument — the Brume 2 has 8 GB of eMMC and Python
+would cost only about 3 MB. Python's standard library is also less of an advantage than
+it appears: `urllib.parse.parse_qsl` discards blank values by default, which would
+silently drop the `udm=` case, and neither language avoids hand-writing the parser.
+
+`ucode`, OpenWrt's own language, ships in the base image and would cost nothing to
+install, but cannot easily be run on macOS for local testing and almost no teacher would
+recognize it. Worth revisiting only if memory proves tight.
+
+The test cases live in a language-agnostic TSV so that the table -- the empirically
+derived, hard-to-replace part -- survives a reimplementation in another language.
 
 ### Stage 1 — OpenWrt VM
 
