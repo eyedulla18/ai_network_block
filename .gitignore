@@ -1,0 +1,10 @@
+# Never commit private keys or generated certificates
+*.key
+*.pem
+*.crt
+*.p12
+*.mobileconfig
+ca/
+certs/
+
+.DS_Store
