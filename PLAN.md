@@ -116,9 +116,16 @@ This is the highest-value component and is independent of all hardware decisions
 
 ### Stage 1 — OpenWrt VM
 
-`brew install qemu`; boot `armsr/armv8` under QEMU with HVF acceleration. The VM
-definition is a committed shell script, so the environment is reproducible by anyone
-cloning the repo.
+`brew install qemu`; boot `armsr/armv8` under QEMU with HVF acceleration.
+
+**Decided 2026-09-24: QEMU from the command line, not UTM.** The VM is defined by a
+committed shell script (`scripts/run-vm.sh`), which makes the environment reproducible by
+anyone cloning the repo and doubles as documentation. UTM is a graphical wrapper around
+the same engine, but stores its configuration in a `.utm` bundle that cannot be
+version-controlled or reviewed. Two further reasons: OpenWrt has no graphical interface,
+so UTM's VM window buys nothing; and Stage 2 needs a private link between two VMs
+(`-netdev socket`), which is one flag on the command line but is not exposed by UTM's
+network settings.
 
 First task: run `squid -v` and settle the blocking unknown above.
 
