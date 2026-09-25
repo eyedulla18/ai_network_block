@@ -492,6 +492,14 @@ mkdir -p "$WWW/cgi-bin"
 if [ -d "$SRC/certpage" ]; then
   cp "$SRC/certpage/index.html" "$WWW/index.html"
   cp "$SRC/certpage/cgi-bin/ca" "$SRC/certpage/cgi-bin/ios" "$WWW/cgi-bin/"
+  # Screenshots are optional; the page drops any frame whose image is missing.
+  if [ -d "$SRC/certpage/img" ]; then
+    mkdir -p "$WWW/img"
+    for f in "$SRC/certpage/img"/*.png "$SRC/certpage/img"/*.jpg; do
+      [ -f "$f" ] && cp "$f" "$WWW/img/"
+    done
+    printf '    %s screenshot(s) installed\n' "$(ls -1 "$WWW/img" 2>/dev/null | wc -l | tr -d ' ')"
+  fi
   chmod 755 "$WWW/cgi-bin/ca" "$WWW/cgi-bin/ios"
   for f in "$WWW/cgi-bin/ca" "$WWW/cgi-bin/ios"; do
     [ -s "$f" ] || { echo "$f copied as an empty file" >&2; exit 1; }

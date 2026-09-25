@@ -1,98 +1,187 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>School Wi-Fi Setup</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         background: #f6f7f9; color: #14161a; }
-  @media (prefers-color-scheme: dark) { body { background: #16181c; color: #e8eaed; } }
-  main { max-width: 34rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
-  h1 { font-size: 1.5rem; margin: .5rem 0 .25rem; }
-  p.lede { color: #5b6270; margin-top: 0; }
-  @media (prefers-color-scheme: dark) { p.lede { color: #9aa1ad; } }
-  .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 12px; padding: 1rem 1.15rem; margin: 1rem 0; }
-  @media (prefers-color-scheme: dark) { .card { background: #1e2126; border-color: #2c3037; } }
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f6f8; --fg: #14161a; --muted: #5b6270;
+    --card: #ffffff; --line: #e2e5ea; --accent: #2f6fed;
+    --ok: #1e8e3e; --warn: #b26a00; --okbg: #e7f5ea; --warnbg: #fdf3e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171b; --fg: #e9ebee; --muted: #9aa1ad;
+      --card: #1e2126; --line: #2d323a; --accent: #6f9bff;
+      --ok: #6cd48a; --warn: #f0c274; --okbg: #17281c; --warnbg: #2a2314;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 32rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+  h1 { font-size: 1.45rem; margin: .25rem 0 .2rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 1rem; }
+
+  .status { border: 1px solid var(--line); border-radius: 14px; padding: .95rem 1.1rem;
+            background: var(--card); margin-bottom: 1.1rem; }
+  .status[data-state="ok"]         { background: var(--okbg);   border-color: var(--ok); }
+  .status[data-state="needs-cert"] { background: var(--warnbg); border-color: var(--warn); }
+  .status b { display: block; font-size: 1.05rem; }
+  .status p { margin: .25rem 0 0; color: var(--muted); font-size: .95rem; }
+
+  .tabs { display: flex; gap: .4rem; margin: 0 0 1rem; flex-wrap: wrap; }
+  .tabs button { flex: 1 1 5.5rem; padding: .55rem .4rem; border-radius: 10px;
+                 border: 1px solid var(--line); background: var(--card); color: inherit;
+                 font: inherit; font-weight: 600; font-size: .92rem; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   a.btn { display: block; text-align: center; text-decoration: none; font-weight: 600;
-          background: #2f6fed; color: #fff; padding: .8rem 1rem; border-radius: 10px; margin: .75rem 0; }
-  ol { padding-left: 1.2rem; } li { margin: .35rem 0; }
-  .tabs { display: flex; gap: .5rem; margin: 1rem 0 0; flex-wrap: wrap; }
-  .tabs button { flex: 1 1 6rem; padding: .55rem .5rem; border-radius: 9px; border: 1px solid #d8dce2;
-                 background: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-  @media (prefers-color-scheme: dark) { .tabs button { background: #22262c; border-color: #343941; color: inherit; } }
-  .tabs button[aria-selected="true"] { background: #2f6fed; border-color: #2f6fed; color: #fff; }
-  .card#status[data-state="ok"] { border-color: #34a853; }
-  .card#status[data-state="needs-cert"] { border-color: #e0a800; }
-  .card#status[data-state="checking"] { opacity: .75; }
-  code { background: rgba(127,127,127,.15); padding: .1rem .3rem; border-radius: 4px; }
-  .warn { font-size: .92rem; color: #7a5200; background: #fff6e0; border: 1px solid #f2dfae;
-          border-radius: 10px; padding: .7rem .9rem; }
-  @media (prefers-color-scheme: dark) { .warn { color: #f0d08a; background: #2a2314; border-color: #4a3d1c; } }
+          background: var(--accent); color: #fff; padding: .85rem 1rem; border-radius: 11px;
+          margin: 0 0 1.25rem; }
+
+  ol.steps { list-style: none; counter-reset: s; margin: 0; padding: 0; }
+  ol.steps > li { counter-increment: s; position: relative;
+                  padding: 0 0 1.35rem 2.4rem; }
+  ol.steps > li::before {
+    content: counter(s); position: absolute; left: 0; top: 0;
+    width: 1.7rem; height: 1.7rem; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: .9rem;
+    display: grid; place-items: center;
+  }
+  /* the connecting line between steps */
+  ol.steps > li:not(:last-child)::after {
+    content: ""; position: absolute; left: .82rem; top: 1.9rem; bottom: .25rem;
+    width: 2px; background: var(--line);
+  }
+  ol.steps p { margin: .1rem 0 0; }
+  ol.steps .hint { color: var(--muted); font-size: .9rem; margin-top: .2rem; }
+
+  .shot { margin: .6rem 0 0; border: 1px solid var(--line); border-radius: 10px;
+          overflow: hidden; background: var(--card); max-width: 15rem; }
+  .shot img { display: block; width: 100%; height: auto; }
+
+  .note { font-size: .92rem; border: 1px solid var(--line); background: var(--card);
+          border-radius: 11px; padding: .7rem .9rem; margin: .25rem 0 1rem; color: var(--muted); }
+  .note b { color: var(--fg); }
+  code { background: rgba(127,127,127,.16); padding: .08rem .3rem; border-radius: 4px;
+         font-size: .9em; word-break: break-all; }
+  footer { margin-top: 2rem; color: var(--muted); font-size: .85rem; }
 </style>
+
 <main>
   <h1>School Wi-Fi Setup</h1>
-  <p class="lede">Install one certificate so Google Search works on this network.</p>
+  <p class="sub">Install one certificate so Google Search works on this network.</p>
 
-  <div class="card" id="status" data-state="checking">
+  <div class="status" id="status" data-state="checking">
     <b id="status-title">Checking this device&hellip;</b>
-    <p id="status-text" class="lede" style="margin:.35rem 0 0">One moment.</p>
+    <p id="status-text">One moment.</p>
   </div>
 
   <div class="tabs" role="tablist">
-    <button role="tab" data-os="ios">iPhone / iPad</button>
+    <button role="tab" data-os="ios">iPhone</button>
     <button role="tab" data-os="android">Android</button>
     <button role="tab" data-os="mac">Mac</button>
     <button role="tab" data-os="windows">Windows</button>
   </div>
 
-  <section class="card" data-panel="ios" hidden>
-    <a class="btn" href="/cgi-bin/ios">Download for iPhone / iPad</a>
-    <ol>
-      <li>Tap the button above, then tap <b>Allow</b>.</li>
-      <li>Open <b>Settings</b>. Tap <b>Profile Downloaded</b> near the top.</li>
-      <li>Tap <b>Install</b> (top right), enter your passcode, tap <b>Install</b> again.</li>
-      <li>Go to <b>Settings &rsaquo; General &rsaquo; About &rsaquo; Certificate Trust Settings</b>.</li>
-      <li>Turn <b>on</b> the switch next to <b>School Filter CA</b>. This step is required.</li>
+  <!-- ===================== iOS ===================== -->
+  <section data-panel="ios" hidden>
+    <a class="btn" href="/cgi-bin/ios">Download the certificate</a>
+    <ol class="steps">
+      <li>
+        <p><b>Tap Allow</b> when iPhone asks to download a configuration profile.</p>
+        <div class="shot"><img src="img/ios-1.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p>Open the <b>Settings</b> app.</p>
+        <p class="hint">Leave this page open &mdash; come back to it when you are done.</p>
+      </li>
+      <li>
+        <p>Tap <b>Profile Downloaded</b> near the top.</p>
+        <p class="hint">Not there? Go to <b>General &rsaquo; VPN &amp; Device Management</b> instead.</p>
+        <div class="shot"><img src="img/ios-2.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p>Tap <b>Install</b>, enter your passcode, then tap <b>Install</b> again.</p>
+        <div class="shot"><img src="img/ios-3.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p>Go to <b>Settings &rsaquo; General &rsaquo; About</b> and scroll to the bottom.
+           Tap <b>Certificate Trust Settings</b>.</p>
+        <div class="shot"><img src="img/ios-4.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p><b>Turn the switch on</b> next to School Filter CA, then tap Continue.</p>
+        <div class="shot"><img src="img/ios-5.png" alt="" loading="lazy"></div>
+        <p class="hint">This step is required. Nothing works until this switch is on.</p>
+      </li>
+      <li>
+        <p>Come back to this page. It will turn green on its own.</p>
+      </li>
     </ol>
-    <p class="warn">If nothing downloads, you are probably in the Wi-Fi sign-in popup. Open Safari and go to this page again.</p>
+    <p class="note"><b>Nothing downloaded?</b> You are probably in the small Wi-Fi sign-in
+       window. Open <b>Safari</b> and go to this page again.</p>
   </section>
 
-  <section class="card" data-panel="android" hidden>
-    <a class="btn" href="/cgi-bin/ca">Download for Android</a>
-    <ol>
-      <li>Tap the button above to save the file.</li>
-      <li>Open <b>Settings</b> and search for <b>CA certificate</b>.</li>
-      <li>Choose <b>Install anyway</b>, then pick the downloaded file.</li>
+  <!-- =================== Android =================== -->
+  <section data-panel="android" hidden>
+    <a class="btn" href="/cgi-bin/ca">Download the certificate</a>
+    <ol class="steps">
+      <li>
+        <p>Tap the button above to save the file.</p>
+        <div class="shot"><img src="img/android-1.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p>Open <b>Settings</b> and search for <b>CA certificate</b>.</p>
+        <div class="shot"><img src="img/android-2.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p>Choose <b>Install anyway</b>, then pick the file you just downloaded.</p>
+        <div class="shot"><img src="img/android-3.png" alt="" loading="lazy"></div>
+      </li>
+      <li>
+        <p>Come back to this page. It will turn green on its own.</p>
+      </li>
     </ol>
-    <p class="warn">Android apps ignore this certificate — only browsers use it. The Google app will not work for search; use Chrome instead.</p>
+    <p class="note"><b>Apps will still not work with Google.</b> Android only uses this
+       certificate in browsers. Use <b>Chrome</b> for searching, not the Google app.</p>
   </section>
 
-  <section class="card" data-panel="mac" hidden>
-    <a class="btn" href="/cgi-bin/ca">Download for Mac</a>
-    <ol>
-      <li>Download the file, then double-click it to open <b>Keychain Access</b>.</li>
-      <li>Find <b>School Filter CA</b> in the <b>login</b> keychain and double-click it.</li>
-      <li>Expand <b>Trust</b> and set <b>When using this certificate</b> to <b>Always Trust</b>.</li>
-      <li>Close the window and enter your password.</li>
+  <!-- ===================== Mac ===================== -->
+  <section data-panel="mac" hidden>
+    <a class="btn" href="/cgi-bin/ca">Download the certificate</a>
+    <ol class="steps">
+      <li><p>Download the file, then double-click it. <b>Keychain Access</b> opens.</p></li>
+      <li><p>Find <b>School Filter CA</b> in the <b>login</b> keychain and double-click it.</p></li>
+      <li><p>Expand <b>Trust</b>, and set <b>When using this certificate</b> to <b>Always Trust</b>.</p></li>
+      <li><p>Close the window and enter your password.</p></li>
     </ol>
-    <p class="warn">Firefox keeps its own certificate list. In Firefox: Settings &rsaquo; Privacy &amp; Security &rsaquo; View Certificates &rsaquo; Import.</p>
+    <p class="note"><b>Firefox</b> keeps its own certificate list:
+       Settings &rsaquo; Privacy &amp; Security &rsaquo; View Certificates &rsaquo; Import.</p>
   </section>
 
-  <section class="card" data-panel="windows" hidden>
-    <a class="btn" href="/cgi-bin/ca">Download for Windows</a>
-    <ol>
-      <li>Download the file and double-click it.</li>
-      <li>Click <b>Install Certificate</b>, choose <b>Current User</b>, then <b>Next</b>.</li>
-      <li>Choose <b>Place all certificates in the following store</b>, click <b>Browse</b>,
-          pick <b>Trusted Root Certification Authorities</b>, then <b>Finish</b>.</li>
+  <!-- =================== Windows =================== -->
+  <section data-panel="windows" hidden>
+    <a class="btn" href="/cgi-bin/ca">Download the certificate</a>
+    <ol class="steps">
+      <li><p>Download the file and double-click it.</p></li>
+      <li><p>Click <b>Install Certificate</b>, choose <b>Current User</b>, then <b>Next</b>.</p></li>
+      <li><p>Choose <b>Place all certificates in the following store</b>, click <b>Browse</b>,
+             and pick <b>Trusted Root Certification Authorities</b>.</p></li>
+      <li><p>Click <b>Next</b>, then <b>Finish</b>.</p></li>
     </ol>
-    <p class="warn">Firefox keeps its own certificate list and needs a separate import.</p>
+    <p class="note"><b>Firefox</b> keeps its own certificate list and needs a separate import.</p>
   </section>
 
-  <p class="lede" style="font-size:.9rem">Fingerprint: <code>__FINGERPRINT__</code><br>
-     Ask a teacher if this does not match the one posted in your classroom.</p>
+  <footer>
+    Fingerprint <code>__FINGERPRINT__</code><br>
+    Ask a teacher if this does not match the one posted in your classroom.
+  </footer>
 </main>
+
 <script>
+  // ---- OS tabs ----------------------------------------------------------
   var tabs = [].slice.call(document.querySelectorAll('[role=tab]'));
   function show(os) {
     tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.os === os)); });
@@ -106,47 +195,62 @@
      : /Android/.test(ua) ? 'android'
      : /Macintosh/.test(ua) ? 'mac'
      : /Windows/.test(ua) ? 'windows' : 'ios');
-</script>
 
-<script>
-  // Auto-check: fetch something from Google over HTTPS. Google is the one
-  // domain this network decrypts, so the request can only succeed if this
-  // device already trusts the school certificate. That makes the fetch itself
-  // the test -- there is nothing for a student to type.
-  //
-  // no-cors means we never read the response; we only care whether the TLS
-  // handshake completed. A rejected promise means the certificate is missing
-  // or untrusted.
+  // ---- drop screenshot frames that have no image ------------------------
+  // The page has to work before anyone has taken the photographs, so a
+  // missing file removes its frame rather than leaving a broken box.
+  [].slice.call(document.querySelectorAll('.shot img')).forEach(function (img) {
+    img.addEventListener('error', function () {
+      var f = img.closest('.shot'); if (f) f.remove();
+    });
+  });
+
+  // ---- certificate check ------------------------------------------------
+  // Fetch something from Google over HTTPS. Google is the one domain this
+  // network decrypts, so the request can only succeed if this device already
+  // trusts the school certificate. The fetch IS the test; no-cors because we
+  // never read the response, only whether the handshake completed.
   (function () {
     var card = document.getElementById('status');
     var title = document.getElementById('status-title');
     var text = document.getElementById('status-text');
+    var busy = false, done = false;
 
     function set(state, t, d) {
       card.dataset.state = state; title.textContent = t; text.textContent = d;
     }
 
-    function needsCert() {
-      set('needs-cert', 'This device needs the certificate',
-          'Follow the steps below, then reload this page.');
+    function check() {
+      if (busy || done) return;
+      busy = true;
+      fetch('https://www.google.com/generate_204', { mode: 'no-cors', cache: 'no-store' })
+        .then(function () {
+          return fetch('/cgi-bin/approve', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+              if (j && j.ok) {
+                done = true;
+                set('ok', 'This device is ready',
+                    'The certificate is installed and you have full access. You can close this page.');
+              } else {
+                set('needs-cert', 'This device needs the certificate',
+                    'Follow the steps below, then come back here.');
+              }
+            });
+        })
+        .catch(function () {
+          set('needs-cert', 'This device needs the certificate',
+              'Follow the steps below, then come back here.');
+        })
+        .then(function () { busy = false; });
     }
 
-    fetch('https://www.google.com/generate_204',
-          { mode: 'no-cors', cache: 'no-store' })
-      .then(function () {
-        // TLS succeeded, so the certificate is trusted. Tell the filter to
-        // let this device through.
-        return fetch('/cgi-bin/approve', { cache: 'no-store' })
-          .then(function (r) { return r.json(); })
-          .then(function (j) {
-            if (j && j.ok) {
-              set('ok', 'This device is set up',
-                  'The certificate is installed and you have full access. You can close this page.');
-            } else {
-              needsCert();
-            }
-          });
-      })
-      .catch(needsCert);
+    // Re-check whenever the student returns from the Settings app, so the page
+    // turns green by itself instead of asking them to reload.
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) check();
+    });
+    window.addEventListener('focus', check);
+    check();
   })();
 </script>
