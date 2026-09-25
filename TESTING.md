@@ -76,11 +76,57 @@ see the note about `/etc/nftables.d` in `squid/SETUP-NOTES.md`.
 
 ### Getting files onto the VM
 
-There is no SSH password on a fresh image and no HTTP server on the host, so
-the serial console is the transfer channel. A quoted heredoc moves a text file
-verbatim; check with `md5sum` on both sides. A fresh image has neither
-`openssl` nor a `base64` applet, so do not plan on decoding anything until
-after `setup-filter.sh` has installed packages.
+`run-vm.sh` forwards host port 2222 to the VM's SSH. Two things have to be true
+before that works.
+
+**1. Give yourself a login.** Either set a password at the VM console:
+
+```sh
+passwd
+```
+
+or install your key, which avoids typing it on every copy:
+
+```sh
+# at the VM console, with your public key pasted in
+mkdir -p /etc/dropbear
+printf '%s\n' 'ssh-ed25519 AAAA... you@host' > /etc/dropbear/authorized_keys
+chmod 600 /etc/dropbear/authorized_keys
+```
+
+**2. Open SSH on the WAN side — TEST ONLY.** The port forward arrives on `eth0`,
+which `setup-filter.sh` puts in the WAN zone, and OpenWrt rejects WAN input by
+default. Without this rule SSH fails with `kex_exchange_identification:
+Connection closed`, which looks like an authentication problem but is not.
+
+```sh
+uci set firewall.testssh=rule
+uci set firewall.testssh.name='TEST-ONLY-ssh-from-wan'
+uci set firewall.testssh.src='wan'
+uci set firewall.testssh.proto='tcp'
+uci set firewall.testssh.dest_port='22'
+uci set firewall.testssh.target='ACCEPT'
+uci commit firewall && /etc/init.d/firewall restart
+```
+
+**Never do this on a deployed box.** On real hardware the WAN side faces the
+Starlink router; this would expose the filter's SSH to it. Remove it with
+`uci delete firewall.testssh` before deploying, and manage a real device from
+the LAN side or the console.
+
+Then, from the Mac:
+
+```sh
+./scripts/push-to-vm.sh --run     # copies the repo and runs setup-filter.sh
+```
+
+The VM's host key goes in `.vm/known_hosts`, not your real one, since a rebuilt
+VM regenerates its keys and would otherwise look like an attack.
+
+If SSH is not an option, the serial console is the fallback: a quoted heredoc
+moves a text file verbatim, and `md5sum` on both sides confirms it. Note that a
+fresh image has neither `openssl` nor a `base64` applet, so nothing can be
+decoded until `setup-filter.sh` has installed packages.
 
 ## Environment B — real devices, no extra hardware
 

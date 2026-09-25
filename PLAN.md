@@ -244,11 +244,52 @@ Findings, all recorded in `squid/SETUP-NOTES.md`:
    `-0x2562`). Non-critical parses fine. Relevant to open question 5, though it is an
    mbedTLS data point and browsers use other TLS stacks.
 
-### Stage 2b — transparent interception, two VMs
+### Stage 2b — transparent interception, two VMs — DONE 2026-09-25
 
-A second VM on a QEMU socket network, sitting behind the filter so traffic is intercepted
-rather than explicitly proxied. Adds the nftables redirects, the QUIC drop and the DNS
-redirect, and answers what a device without the CA actually experiences.
+A client VM with **no proxy configuration at all** -- DHCP and a default gateway only --
+has its traffic intercepted, Google decrypted, and `udm=50` rewritten to `udm=14`.
+Instagram is spliced and works without the CA. See `TESTING.md` for how to reproduce.
+
+Every rule verified by packet counter rather than by loading without error:
+
+| Rule | Packets |
+|---|---|
+| `schoolfilter-http` (80 to Squid) | 1 |
+| `schoolfilter-https` (443 to Squid) | 3 |
+| `schoolfilter-dns` (53 to local resolver) | 5 |
+| `schoolfilter-drop-quic` (UDP 443) | 3 |
+
+A client without the CA gets `NONE_NONE/000 CONNECT` on Google and a TLS failure, which
+is the expected un-certed student experience. `nslookup example.com 8.8.8.8` is answered
+by the local resolver, so DNS cannot escape.
+
+Findings:
+
+1. **Firewall rules written to `/etc/nftables.d/` are silently inert.** fw4 only emits a
+   `jump dstnat_lan` when a uci redirect exists for that zone, so a hand-written chain is
+   created, appears in `nft list`, and never matches. Counter stays at 0 and every request
+   bypasses the proxy with no error anywhere. Now built from named uci sections, and the
+   script asserts the rules appear in the live ruleset.
+2. **Squid died on every reboot.** `/var` is tmpfs, and the boot hook created
+   `/var/cache/squid` but not `/var/log/squid`, so Squid failed with `Cannot open
+   '/var/log/squid/access.log'`. Confirmed by rebooting twice: dead before the fix,
+   running after, and still rewriting correctly. This is critical at a site with
+   unreliable power.
+3. busybox has no `install(1)`.
+4. Packages must be installed *after* the network is configured; a fresh device has no
+   route to any mirror.
+
+### Stage 2c — real devices, bridged (READY, needs a person)
+
+`sudo ./scripts/run-vm.sh --bridged en0` puts the filter's LAN side on the real network so
+a phone or laptop can use it as a gateway, with no extra hardware. Written and documented
+in `TESTING.md` but **not yet run** -- it needs `sudo` and a device to configure by hand.
+
+Set `LAN_DHCP=off` first. Two DHCP servers on one segment will break the home network.
+
+This is the only environment that can answer the remaining client-side questions: whether
+iOS and Android trust the CA, whether Android apps ignore it, whether name constraints are
+honored, and what Google's background `/search` requests look like in a real browser.
 
 ### Stage 3 — certificate distribution and portal
 
@@ -332,6 +373,24 @@ for exceptions such as `noai.duckduckgo.com`.
 
 The blocklist is hosted in this repo so AdGuard Home can subscribe to it and every
 school receives updates.
+
+**Implemented 2026-09-25** as `blocklists/ai-sites.txt` (30 domains) plus
+`blocklists/allowlist.txt`. `scripts/setup-filter.sh` turns these into dnsmasq rules;
+the same file works unchanged as an AdGuard Home subscription URL. AdGuard Home itself is
+not yet installed -- dnsmasq already receives all DNS via the port-53 redirect, so it does
+the blocking today with no extra moving parts. AdGuard Home remains the better answer for
+a query log and a teacher-facing UI.
+
+Verified from a client: `chatgpt.com`, `claude.ai`, `gemini.google.com` and
+`perplexity.ai` resolve to `0.0.0.0`, while `www.google.com`, `google.com`,
+`www.youtube.com` and `accounts.google.com` are untouched.
+
+Two ways a blocklist can appear to work while doing nothing, both now handled:
+
+- OpenWrt points dnsmasq's `conf-dir` at a generated path under `/tmp`, so files placed in
+  `/etc/dnsmasq.d` are ignored entirely. `confdir` has to be repointed via uci.
+- `address=/domain/0.0.0.0` answers only A queries. AAAA goes upstream, so a dual-stack
+  client still reaches the site over IPv6. Every entry needs both an A and an AAAA rule.
 
 ## Certificate distribution
 
