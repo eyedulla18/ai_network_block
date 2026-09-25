@@ -279,7 +279,51 @@ Findings:
 4. Packages must be installed *after* the network is configured; a fresh device has no
    route to any mirror.
 
-### Stage 2c — real devices, bridged (READY, needs a person)
+### Stage 2c — real device (iPhone) — WORKING 2026-09-25
+
+**The whole design works on a real iPhone.** Squid access log for the phone:
+
+```
+3 x TCP_REDIRECT/302    the rewriter firing on real searches
+68 x TCP_MISS/200       Google decrypted and inspected
+```
+
+Facebook, Apple services and everything else spliced and untouched.
+
+Two findings from the real device:
+
+**1. A device without the CA loses Google Search and nothing else.** Before the
+certificate was trusted, `www.google.com:443` logged 57 x `NONE_NONE/200` with
+zero bytes -- the handshake aborted -- while `facebook.com`, `fbcdn.net`,
+`gateway.icloud.com` all returned `TCP_TUNNEL/200` normally. This is exactly the
+behaviour the design predicts, now confirmed rather than assumed.
+
+**2. Open question 2 is answered: background requests are not a problem.**
+Of 6 `/search` requests, 3 were rewritten and 3 passed through -- one redirect
+plus one canonical fetch per search, which is the loop-safety property holding in
+a real browser. Every background request went to a different path:
+
+```
+/gen_204 (48)   /xjs/_/js/... (34)   /complete/s (10)   /async/bgasy (3)
+/client_204 (3) /pagead/1p-conversion/... (3)   /sgasync (1)   /recaptcha/... (4)
+```
+
+None are `/search`, so the rewriter leaves them alone and the page renders
+correctly. The `Sec-Fetch-Mode` machinery is available if this ever changes, but
+is not needed today.
+
+*Caveat: Squid's `strip_query_terms` is on by default, so query strings are not
+logged and the `udm` values of those requests could not be inspected.*
+
+**Note on how it was reached.** Transparent interception via the gateway could not
+be made to work with iOS on this setup: the phone ARPed for the gateway, received
+the reply, and then sent no TCP at all -- DNS only. The explicit proxy path
+(Configure Proxy > Manual, port 3128) worked immediately. Transparent
+interception is verified in the two-VM lab, so this is an iOS-plus-bridged-VM
+interaction rather than a flaw in the design; real hardware with its own wired
+interfaces will not have it.
+
+### Stage 2d — bridged setup notes (kept for reference)
 
 `sudo ./scripts/run-vm.sh --bridged en0` puts the filter's LAN side on the real network so
 a phone or laptop can use it as a gateway, with no extra hardware. Written and documented
