@@ -93,6 +93,21 @@ else
   skip "wan on $WAN_IF"
 fi
 
+# The armsr image ships network.wan6 bound to eth1 -- the very interface this
+# script repurposes as the student LAN. Reassigning only network.wan leaves
+# wan6 there, which puts the student LAN in the WAN firewall zone (it appears in
+# input_wan and forward_wan) and, worse, adds it to srcnat_wan so traffic
+# heading back to students is masqueraded. Nothing errors; the rules just behave
+# strangely. Point wan6 at the real WAN.
+if [ -n "$(uci -q get network.wan6 || true)" ] \
+   && [ "$(uci -q get network.wan6.device || true)" != "$WAN_IF" ]; then
+  uci set network.wan6.device="$WAN_IF"
+  uci commit network
+  NET_DIRTY=1
+else
+  skip "wan6 not on the lan device"
+fi
+
 if [ "$(uci -q get network.lan.ipaddr || true)" != "$LAN_ADDR" ] \
    || [ "$(uci -q get network.lan.device || true)" != "$LAN_IF" ]; then
   uci set network.lan=interface
