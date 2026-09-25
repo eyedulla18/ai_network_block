@@ -242,7 +242,18 @@ https_port $HTTPS_PORT intercept ssl-bump \\
 sslcrtd_program /usr/lib/squid/security_file_certgen -s $SSL_DB -M $SSL_DB_SIZE
 sslcrtd_children 4
 
-acl gsearch ssl::server_name .google.com
+# Bump ONLY the Google search hosts, never all of *.google.com.
+#
+# ".google.com" also matches play.google.com, accounts.google.com and the
+# clients6.google.com API hosts. Those are used by apps that pin certificates,
+# which reject the intercepted connection outright: measured on a real iPhone,
+# play.google.com made 21 connections and completed zero requests, retrying in a
+# loop, while www.google.com completed 154. Bumping them breaks Google Play and
+# app sign-in for no benefit, since only search carries AI Overviews.
+#
+# Matches google.<tld> and www.google.<tld>, including two-part suffixes such as
+# google.co.uk, and nothing deeper.
+acl gsearch ssl::server_name_regex -i ^(www\\.)?google\\.[a-z]{2,}(\\.[a-z]{2,})?$
 
 # peek MUST be restricted to step 1. "ssl_bump peek all" matches again at
 # step 2, and after peeking at step 2 Squid can only splice -- so the bump
