@@ -203,6 +203,24 @@ reach the thing that fixes it.
 - macOS Wi-Fi bridging is less reliable than wired. This Mac has no Ethernet
   port, so `en0` is the only option without a USB adapter. If the VM cannot
   get traffic over the bridge, that is the first thing to suspect.
+- **The bridge follows the host's Wi-Fi network, so the Mac must not roam.**
+  `vmnet-bridged` attaches to `en0` itself, not to a particular network. If the
+  Mac joins a different Wi-Fi mid-test, the VM's static LAN address is suddenly
+  on the wrong segment and every device pointed at it goes dark -- with no error
+  anywhere, and the VM still running happily.
+
+  This is easy to misread. It presents as the phone sending DNS to the filter
+  and then stopping, with zero TCP ever arriving, which looks exactly like a
+  wrong gateway setting or iOS falling back to cellular. Check the host first:
+
+  ```sh
+  ipconfig getifaddr en0          # must be on the same /24 as LAN_ADDR
+  networksetup -listpreferredwirelessnetworks en0
+  ```
+
+  Before testing, turn Auto-Join **off** for every other known network in
+  System Settings > Wi-Fi > Known Networks. On real hardware this problem
+  disappears, because the filter has its own wired interfaces.
 - **Only devices you point at the filter by hand are filtered.** This proves
   the filter works; it does not enforce anything.
 - Remove the test-only WAN SSH rule before this ever goes near real hardware:
