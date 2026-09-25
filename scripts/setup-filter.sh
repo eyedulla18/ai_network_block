@@ -266,7 +266,12 @@ sleep 2
 if [ "$PORTAL" = on ]; then
   SQUID_PORTAL_CONF=$(cat <<EOF
 # Checked per request against $APPROVED_FILE, with no restart needed.
-external_acl_type sf_approved ttl=30 negative_ttl=5 children-max=5 %SRC /usr/bin/sf-approved.sh
+# negative_ttl is deliberately short: it is how long a device keeps being
+# refused after the portal has approved it. Measured at 5s, apps stayed broken
+# for about 11 seconds after approval once retry backoff was included. The
+# helper is a few lines of shell reading a tiny file, so frequent lookups cost
+# nothing at this scale.
+external_acl_type sf_approved ttl=60 negative_ttl=1 children-max=5 %SRC /usr/bin/sf-approved.sh
 acl approved external sf_approved
 acl portalhost dstdomain $PORTAL_HOST
 

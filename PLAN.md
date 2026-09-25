@@ -323,6 +323,33 @@ interception is verified in the two-VM lab, so this is an iOS-plus-bridged-VM
 interaction rather than a flaw in the design; real hardware with its own wired
 interfaces will not have it.
 
+### Stage 3 — captive portal — DONE 2026-09-25
+
+Verified on a real iPhone. The entire cycle, from the log:
+
+```
+05:21:03  TCP_MISS/200      http://cert.school:8080/                portal page
+05:21:04  TCP_MISS/204      https://www.google.com/generate_204     certificate check passed
+05:21:04  TCP_REDIRECT/302  .../cgi-bin/approve                     client address stamped
+05:21:04  TCP_MISS/200      .../cgi-bin/approve?ip=...              approved
+05:21:04  TCP_DENIED/200    gateway.icloud.com:443                  still gated
+05:21:15  TCP_TUNNEL/200    gateway.icloud.com:443                  through
+```
+
+No password and no interaction. See `portal/README.md`.
+
+Two things learned from watching a real device go through it:
+
+1. **An unapproved device fails everywhere, not just in the browser.** iCloud,
+   the App Store, and OAuth sign-in all returned `TCP_DENIED`, and apps report
+   that as vague errors rather than sending anyone to a portal. Only a
+   plain-HTTP page in a browser surfaces it. Day-one instructions to students
+   must say "open your browser", not "it will tell you".
+2. **`negative_ttl` is how long a device stays blocked after being approved.**
+   At 5s, apps stayed broken for about 11 seconds once retry backoff was
+   included. Lowered to 1s, recovery is ~2s. The helper reads a tiny file, so
+   frequent lookups cost nothing at this scale.
+
 ### Stage 2d — bridged setup notes (kept for reference)
 
 `sudo ./scripts/run-vm.sh --bridged en0` puts the filter's LAN side on the real network so
