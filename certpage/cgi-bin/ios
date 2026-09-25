@@ -1,0 +1,10 @@
+#!/bin/sh
+# iOS only opens a configuration profile in Settings when it arrives as
+# application/x-apple-aspen-config. Any other type just downloads a file the
+# user then has to find and install by hand.
+MC=/etc/school-filter/www/school-ca.mobileconfig
+printf 'Content-Type: application/x-apple-aspen-config\r\n'
+printf 'Content-Disposition: attachment; filename="school-ca.mobileconfig"\r\n'
+printf 'Content-Length: %s\r\n' "$(wc -c < "$MC")"
+printf '\r\n'
+cat "$MC"

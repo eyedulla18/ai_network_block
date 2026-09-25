@@ -27,6 +27,17 @@ LAN_CIDR=${LAN_CIDR:-192.168.1.0/24}
 # conflicting leases and break the network for everyone on it.
 LAN_DHCP=${LAN_DHCP:-server}
 
+# Port for the certificate download page. Deliberately not 80: the firewall
+# redirects LAN port 80 into Squid, so a page served there would be proxied
+# rather than delivered.
+CERT_PORT=${CERT_PORT:-8080}
+
+# OpenWrt's squid init script always appends one "http_port" from uci, so there
+# is a forward-proxy port whether you want one or not. Giving it ssl-bump
+# options turns it into a useful fallback: a device can be pointed at it
+# explicitly when transparent interception is not available.
+EXPLICIT_PROXY_PORT=${EXPLICIT_PROXY_PORT:-3128}
+
 HTTP_PORT=${HTTP_PORT:-3129}
 HTTPS_PORT=${HTTPS_PORT:-3130}
 CA_DIR=${CA_DIR:-/etc/squid/ssl}
@@ -380,6 +391,85 @@ if [ -n "$PROBE" ]; then
   fi
 fi
 printf '    %s domains blocked\n' "$(sed 's/#.*//' "$BLOCKLIST" | tr -d ' \t\r' | grep -vc '^$')"
+
+###########################################################################
+say "Installing certificate page on port $CERT_PORT"
+###########################################################################
+WWW=/etc/school-filter/www
+mkdir -p "$WWW/cgi-bin"
+
+if [ -d "$SRC/certpage" ]; then
+  cp "$SRC/certpage/index.html" "$WWW/index.html"
+  cp "$SRC/certpage/cgi-bin/ca" "$SRC/certpage/cgi-bin/ios" "$WWW/cgi-bin/"
+  chmod 755 "$WWW/cgi-bin/ca" "$WWW/cgi-bin/ios"
+else
+  echo "certpage/ not found next to this script" >&2; exit 1
+fi
+
+cp "$CA_DIR/ca.crt" "$WWW/school-ca.crt"
+chmod 644 "$WWW/school-ca.crt"
+
+# Show the fingerprint on the page so a student can check it against one posted
+# in the classroom, rather than trusting whatever certificate a network offers.
+FP=$(openssl x509 -in "$CA_DIR/ca.crt" -noout -fingerprint -sha256 | sed 's/^.*=//')
+sed "s|__FINGERPRINT__|$FP|" "$SRC/certpage/index.html" > "$WWW/index.html"
+
+# iOS only opens a profile in Settings when it is a signed-or-plain
+# .mobileconfig served as application/x-apple-aspen-config.
+U1=$(cat /proc/sys/kernel/random/uuid)
+U2=$(cat /proc/sys/kernel/random/uuid)
+DER_B64=$(openssl x509 -in "$CA_DIR/ca.crt" -outform DER | openssl base64)
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+  printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  printf '%s\n' '<plist version="1.0"><dict>'
+  printf '%s\n' '<key>PayloadContent</key><array><dict>'
+  printf '%s\n' '<key>PayloadCertificateFileName</key><string>school-ca.crt</string>'
+  printf '%s\n' '<key>PayloadContent</key><data>'
+  printf '%s\n' "$DER_B64"
+  printf '%s\n' '</data>'
+  printf '%s\n' '<key>PayloadDescription</key><string>Adds a certificate authority so school Wi-Fi can filter Google Search.</string>'
+  printf '<key>PayloadDisplayName</key><string>%s</string>\n' "$CA_CN"
+  printf '<key>PayloadIdentifier</key><string>school.filter.root.%s</string>\n' "$U1"
+  printf '%s\n' '<key>PayloadType</key><string>com.apple.security.root</string>'
+  printf '<key>PayloadUUID</key><string>%s</string>\n' "$U1"
+  printf '%s\n' '<key>PayloadVersion</key><integer>1</integer>'
+  printf '%s\n' '</dict></array>'
+  printf '<key>PayloadDisplayName</key><string>%s</string>\n' "$CA_CN"
+  printf '<key>PayloadIdentifier</key><string>school.filter.profile.%s</string>\n' "$U2"
+  printf '%s\n' '<key>PayloadRemovalDisallowed</key><false/>'
+  printf '%s\n' '<key>PayloadType</key><string>Configuration</string>'
+  printf '<key>PayloadUUID</key><string>%s</string>\n' "$U2"
+  printf '%s\n' '<key>PayloadVersion</key><integer>1</integer>'
+  printf '%s\n' '</dict></plist>'
+} > "$WWW/school-ca.mobileconfig"
+chmod 644 "$WWW/school-ca.mobileconfig"
+
+if apk info -e uhttpd >/dev/null 2>&1; then skip "uhttpd"; else apk add uhttpd; fi
+
+uci -q delete uhttpd.certpage || true
+uci set uhttpd.certpage=uhttpd
+uci add_list uhttpd.certpage.listen_http="0.0.0.0:$CERT_PORT"
+uci set uhttpd.certpage.home="$WWW"
+uci set uhttpd.certpage.cgi_prefix='/cgi-bin'
+uci add_list uhttpd.certpage.index_page='index.html'
+uci commit uhttpd
+/etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+sleep 2
+
+if wget -q -O- "http://127.0.0.1:$CERT_PORT/" 2>/dev/null | grep -q 'School Wi-Fi Setup'; then
+  printf '    cert page serving on port %s\n' "$CERT_PORT"
+else
+  echo "cert page is not responding on port $CERT_PORT" >&2; exit 1
+fi
+
+###########################################################################
+say "Configuring explicit proxy port $EXPLICIT_PROXY_PORT"
+###########################################################################
+# The init script emits: http_port $http_port $http_port_options
+uci set squid.squid.http_port="$EXPLICIT_PROXY_PORT"
+uci set squid.squid.http_port_options="ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=4MB tls-cert=$CA_DIR/ca.crt tls-key=$CA_DIR/ca.key"
+uci commit squid
 
 ###########################################################################
 say "Starting Squid"

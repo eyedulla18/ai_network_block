@@ -42,12 +42,12 @@ echo "Copying to $HOST:$DEST (port $PORT) ..."
 # shellcheck disable=SC2086
 ssh $SSHOPTS "$HOST" "mkdir -p $DEST" </dev/null
 
-for d in rewriter squid blocklists scripts; do
+for d in rewriter squid blocklists scripts certpage; do
   # shellcheck disable=SC2086
   scp $SCPOPTS -r "$SRC/$d" "$HOST:$DEST/" >/dev/null
 done
 
-echo "Copied: rewriter squid blocklists scripts"
+echo "Copied: rewriter squid blocklists scripts certpage"
 
 if [ "$RUN" = yes ]; then
   echo

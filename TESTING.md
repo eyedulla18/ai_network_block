@@ -128,57 +128,99 @@ moves a text file verbatim, and `md5sum` on both sides confirms it. Note that a
 fresh image has neither `openssl` nor a `base64` applet, so nothing can be
 decoded until `setup-filter.sh` has installed packages.
 
-## Environment B — real devices, no extra hardware
+## Environment B — real devices (your phone), no extra hardware
 
-Filters a real phone or laptop through the VM. Needs `sudo`, because bridging
-a VM onto a physical interface uses Apple's vmnet framework.
+Filters a real phone through the VM. Needs `sudo` once, because bridging a VM
+onto a physical interface uses Apple's vmnet framework.
 
 ```
-home router 192.168.0.1
+home router 192.168.1.1
     │  Wi-Fi
-   Mac en0 ──── vmnet-bridged ──── filter VM  192.168.0.50
+   Mac en0 ──── vmnet-bridged ──── filter VM  192.168.1.50
     │                                   │
     └── QEMU user NAT (filter's uplink) ┘
 
-test device: gateway and DNS set manually to 192.168.0.50
+phone: gateway and DNS set by hand to 192.168.1.50
 ```
 
-The filter's uplink stays on QEMU's NAT rather than the bridged interface, so
-traffic goes device → VM → Mac → internet, and never hairpins back through
-the home router.
+The filter's uplink stays on QEMU's NAT, so traffic goes phone → VM → Mac →
+internet and never hairpins back through the home router.
 
-### Run it
+### Steps
 
-1. Pick a free address on your LAN and turn the VM's DHCP server **off**, so
-   it cannot fight your home router. On the filter VM:
+**1. Pick a free address and switch the config.** On the filter VM:
 
-   ```sh
-   cat >> /etc/school-filter.conf <<'EOF'
-   LAN_ADDR=192.168.0.50
-   LAN_CIDR=192.168.0.0/24
-   LAN_DHCP=off
-   EOF
-   sh scripts/setup-filter.sh
-   ```
+```sh
+cd /root/school-filter
+sh scripts/bridged-mode.sh 192.168.1.50
+```
 
-2. Boot with the LAN side bridged:
+This sets `LAN_ADDR`, `LAN_CIDR` and `LAN_DHCP=off` together and re-runs
+`setup-filter.sh`. It refuses the `.1` of the subnet, anything that is not an
+IPv4 address, and any address already answering on the network.
 
-   ```sh
-   sudo ./scripts/run-vm.sh --bridged en0
-   ```
+**2. Relaunch bridged.** On the Mac, stop the VM (`poweroff` at its console),
+then:
 
-3. On the test device, set the gateway and DNS to `192.168.0.50` by hand, and
-   install the CA from `/etc/squid/ssl/ca.crt`.
+```sh
+sudo ./scripts/run-vm.sh --bridged en0
+```
+
+**3. Point the phone at it.** In the Wi-Fi network's settings, set **both**:
+
+| | |
+|---|---|
+| Router / Gateway | `192.168.1.50` |
+| DNS | `192.168.1.50` |
+
+On iOS: Settings → Wi-Fi → (i) → Configure IP → Manual. On Android:
+long-press the network → Modify → Advanced → IP settings → Static.
+
+**4. Install the certificate.** Open `http://192.168.1.50:8080/` on the phone.
+The page detects the OS and shows only the relevant steps. iOS gets a
+`.mobileconfig` served as `application/x-apple-aspen-config`, which opens
+directly in Settings; everything else gets the `.crt`.
+
+iOS needs the extra step the page calls out: **Settings → General → About →
+Certificate Trust Settings**, then enable the switch. The certificate does
+nothing until that is on.
+
+**5. Test.** Search on Google. AI Overviews and AI Mode should be gone, and
+`chatgpt.com` should not resolve.
+
+### Why port 8080 and not 80
+
+The firewall redirects LAN port 80 into Squid, so a page served on port 80
+would be proxied rather than delivered. The certificate page has to live
+outside the redirected ports, or a device without the certificate could not
+reach the thing that fixes it.
 
 ### Caveats
 
-- **Two DHCP servers on one segment will break your home network.** `LAN_DHCP=off`
-  is not optional here.
+- **Two DHCP servers on one segment will break your home network.**
+  `bridged-mode.sh` sets `LAN_DHCP=off` for you; do not turn it back on while
+  bridged.
 - macOS Wi-Fi bridging is less reliable than wired. This Mac has no Ethernet
-  port, so `en0` (Wi-Fi) is the only option without a USB adapter.
-- A device whose gateway is not changed is not filtered at all. This setup
-  cannot enforce anything; it only demonstrates the filter on a willing device.
-- Only this arrangement can answer the questions the VMs cannot: whether iOS
-  and Android trust the CA, whether Android apps ignore it, whether name
-  constraints are honored, and what Google's background `/search` requests
-  look like in a real browser.
+  port, so `en0` is the only option without a USB adapter. If the VM cannot
+  get traffic over the bridge, that is the first thing to suspect.
+- **Only devices you point at the filter by hand are filtered.** This proves
+  the filter works; it does not enforce anything.
+- Remove the test-only WAN SSH rule before this ever goes near real hardware:
+  `uci delete firewall.testssh && uci commit firewall && /etc/init.d/firewall restart`
+
+### Going back to the two-VM lab
+
+```sh
+sed -i '/^LAN_ADDR=/d; /^LAN_CIDR=/d; /^LAN_DHCP=/d' /etc/school-filter.conf
+printf 'LAN_ADDR=192.168.1.1\nLAN_CIDR=192.168.1.0/24\nLAN_DHCP=server\n' >> /etc/school-filter.conf
+sh scripts/setup-filter.sh
+```
+
+Then relaunch with plain `./scripts/run-vm.sh`.
+
+### What only this environment can answer
+
+Whether iOS and Android actually trust the CA, whether Android apps ignore it,
+whether X.509 name constraints are honored on a user-installed CA, and what
+Google's background `/search` requests look like in a real browser. None of
+that can be established from a VM with curl.

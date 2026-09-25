@@ -1,0 +1,10 @@
+#!/bin/sh
+# Serves the CA with the content type browsers expect for a certificate.
+# uhttpd guesses text/plain from the extension otherwise, and some browsers
+# then display the PEM instead of offering to install it.
+CRT=/etc/school-filter/www/school-ca.crt
+printf 'Content-Type: application/x-x509-ca-cert\r\n'
+printf 'Content-Disposition: attachment; filename="school-ca.crt"\r\n'
+printf 'Content-Length: %s\r\n' "$(wc -c < "$CRT")"
+printf '\r\n'
+cat "$CRT"
