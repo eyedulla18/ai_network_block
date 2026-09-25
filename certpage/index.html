@@ -21,6 +21,9 @@
                  background: #fff; font: inherit; font-weight: 600; cursor: pointer; }
   @media (prefers-color-scheme: dark) { .tabs button { background: #22262c; border-color: #343941; color: inherit; } }
   .tabs button[aria-selected="true"] { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  .card#status[data-state="ok"] { border-color: #34a853; }
+  .card#status[data-state="needs-cert"] { border-color: #e0a800; }
+  .card#status[data-state="checking"] { opacity: .75; }
   code { background: rgba(127,127,127,.15); padding: .1rem .3rem; border-radius: 4px; }
   .warn { font-size: .92rem; color: #7a5200; background: #fff6e0; border: 1px solid #f2dfae;
           border-radius: 10px; padding: .7rem .9rem; }
@@ -29,6 +32,11 @@
 <main>
   <h1>School Wi-Fi Setup</h1>
   <p class="lede">Install one certificate so Google Search works on this network.</p>
+
+  <div class="card" id="status" data-state="checking">
+    <b id="status-title">Checking this device&hellip;</b>
+    <p id="status-text" class="lede" style="margin:.35rem 0 0">One moment.</p>
+  </div>
 
   <div class="tabs" role="tablist">
     <button role="tab" data-os="ios">iPhone / iPad</button>
@@ -98,4 +106,47 @@
      : /Android/.test(ua) ? 'android'
      : /Macintosh/.test(ua) ? 'mac'
      : /Windows/.test(ua) ? 'windows' : 'ios');
+</script>
+
+<script>
+  // Auto-check: fetch something from Google over HTTPS. Google is the one
+  // domain this network decrypts, so the request can only succeed if this
+  // device already trusts the school certificate. That makes the fetch itself
+  // the test -- there is nothing for a student to type.
+  //
+  // no-cors means we never read the response; we only care whether the TLS
+  // handshake completed. A rejected promise means the certificate is missing
+  // or untrusted.
+  (function () {
+    var card = document.getElementById('status');
+    var title = document.getElementById('status-title');
+    var text = document.getElementById('status-text');
+
+    function set(state, t, d) {
+      card.dataset.state = state; title.textContent = t; text.textContent = d;
+    }
+
+    function needsCert() {
+      set('needs-cert', 'This device needs the certificate',
+          'Follow the steps below, then reload this page.');
+    }
+
+    fetch('https://www.google.com/generate_204',
+          { mode: 'no-cors', cache: 'no-store' })
+      .then(function () {
+        // TLS succeeded, so the certificate is trusted. Tell the filter to
+        // let this device through.
+        return fetch('/cgi-bin/approve', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (j && j.ok) {
+              set('ok', 'This device is set up',
+                  'The certificate is installed and you have full access. You can close this page.');
+            } else {
+              needsCert();
+            }
+          });
+      })
+      .catch(needsCert);
+  })();
 </script>

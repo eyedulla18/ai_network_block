@@ -44,7 +44,7 @@ dumb access point only.
 | AdGuard Home | DNS blocklist for AI sites; resolves `cert.school`; blocks known DoH providers |
 | Squid (`ssl_bump`, intercept) | Peek at SNI; **bump Google search only**, splice everything else |
 | URL rewrite helper (Lua) | Squid `url_rewrite_program`; canonicalizes Google `/search` URLs |
-| Captive portal | Blocks unapproved devices; walled garden for the cert page (see Open Question 3) |
+| Captive portal | Squid `external_acl_type` gate plus an auto-checking portal page (`portal/`) |
 | Cert download page | `uhttpd` serving `http://cert.school/` |
 | Firewall (fw4/nftables) | Student LAN only (see below) |
 
@@ -498,8 +498,14 @@ Two ways a blocklist can appear to work while doing nothing, both now handled:
    `url_rewrite_extras` can pass `%{Sec-Fetch-Mode}>h` to the helper, which makes this
    workable — *verify against the Squid build on the target.* Find other AI endpoints via
    Squid logs.
-3. **What replaces openNDS?** Evaluate coova-chilli, wifidog, or a custom nftables plus
-   CGI approach.
+3. ~~**What replaces openNDS?**~~ **Answered 2026-09-25: none of them.** The gating is
+   done in Squid, which already sees every web request, so no captive-portal daemon is
+   needed. An `external_acl_type` helper checks the client against an approvals file on
+   every request, `deny_info` sends unapproved devices to the portal, and the walled
+   garden is two `http_access allow` lines. The portal page proves the CA is installed by
+   fetching from bumped Google and then calls a CGI that approves the device. Verified
+   end to end: unapproved gets 302 to the portal, the CGI approves, access opens without
+   a restart, and search is still rewritten. See `portal/README.md`.
 4. Block `duckduckgo.com` (it serves AI answers) and allow only `noai.duckduckgo.com`?
 5. Do student devices honor X.509 name constraints on user-installed CAs?
 6. Which other endpoints serve AI Overviews or AI Mode?

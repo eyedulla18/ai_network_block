@@ -38,6 +38,14 @@ CERT_PORT=${CERT_PORT:-8080}
 # explicitly when transparent interception is not available.
 EXPLICIT_PROXY_PORT=${EXPLICIT_PROXY_PORT:-3128}
 
+# Captive portal. "on" means a device cannot browse until it has proved the
+# school CA is installed, which the portal page checks automatically. Set to
+# "off" to let every device on the student LAN straight through.
+PORTAL=${PORTAL:-on}
+PORTAL_HOST=${PORTAL_HOST:-cert.school}
+APPROVED_FILE=${APPROVED_FILE:-/etc/school-filter/approved.txt}
+WWW=${WWW:-/etc/school-filter/www}
+
 HTTP_PORT=${HTTP_PORT:-3129}
 HTTPS_PORT=${HTTPS_PORT:-3130}
 CA_DIR=${CA_DIR:-/etc/squid/ssl}
@@ -229,6 +237,59 @@ mkdir -p /var/log/squid
 /etc/init.d/school-filter-ssldb start
 
 ###########################################################################
+say "Installing captive portal ($PORTAL)"
+###########################################################################
+mkdir -p "$(dirname "$APPROVED_FILE")" "$WWW/cgi-bin"
+touch "$APPROVED_FILE"
+chmod 644 "$APPROVED_FILE"
+
+if [ -d "$SRC/portal" ]; then
+  cp "$SRC/portal/sf-approved.sh" /usr/bin/sf-approved.sh
+  chmod 755 /usr/bin/sf-approved.sh
+  [ -s /usr/bin/sf-approved.sh ] || { echo "sf-approved.sh copied empty" >&2; exit 1; }
+  cp "$SRC/portal/cgi-bin/approve" "$WWW/cgi-bin/approve"
+  chmod 755 "$WWW/cgi-bin/approve"
+  [ -s "$WWW/cgi-bin/approve" ] || { echo "approve CGI copied empty" >&2; exit 1; }
+else
+  echo "portal/ not found next to this script" >&2; exit 1
+fi
+
+# The portal has to be reachable by name before a device is approved, so point
+# it at the router in DNS.
+printf 'address=/%s/%s\n' "$PORTAL_HOST" "$LAN_ADDR" > /etc/dnsmasq.d/20-school-filter-portal.conf
+/etc/init.d/dnsmasq restart >/dev/null 2>&1
+sleep 2
+
+# Build the Squid access block. With the portal on, an unapproved device may
+# reach only the portal itself and Google search -- the latter because fetching
+# from bumped Google is how the portal proves the certificate is trusted.
+if [ "$PORTAL" = on ]; then
+  SQUID_PORTAL_CONF=$(cat <<EOF
+# Checked per request against $APPROVED_FILE, with no restart needed.
+external_acl_type sf_approved ttl=30 negative_ttl=5 children-max=5 %SRC /usr/bin/sf-approved.sh
+acl approved external sf_approved
+acl portalhost dstdomain $PORTAL_HOST
+
+http_access deny !studentlan
+http_access allow approved
+http_access allow portalhost
+http_access allow gsearch
+http_access deny all
+
+# Anything denied above is a device that has not proved it has the certificate.
+# Send it to the portal rather than showing a proxy error.
+deny_info 302:http://$PORTAL_HOST:$CERT_PORT/ all
+EOF
+)
+else
+  SQUID_PORTAL_CONF=$(cat <<EOF
+http_access allow studentlan
+http_access deny all
+EOF
+)
+fi
+
+###########################################################################
 say "Writing squid.conf (intercept mode)"
 ###########################################################################
 cat > /etc/squid/squid.conf <<EOF
@@ -269,8 +330,7 @@ url_rewrite_children 5 startup=1 idle=1 concurrency=0
 url_rewrite_extras "sfm=%{Sec-Fetch-Mode}>h rm=%>rm"
 
 acl studentlan src $LAN_CIDR
-http_access allow studentlan
-http_access deny all
+$SQUID_PORTAL_CONF
 
 cache deny all
 access_log /var/log/squid/access.log squid
@@ -422,7 +482,6 @@ printf '    %s domains blocked\n' "$(sed 's/#.*//' "$BLOCKLIST" | tr -d ' \t\r' 
 ###########################################################################
 say "Installing certificate page on port $CERT_PORT"
 ###########################################################################
-WWW=/etc/school-filter/www
 mkdir -p "$WWW/cgi-bin"
 
 if [ -d "$SRC/certpage" ]; then

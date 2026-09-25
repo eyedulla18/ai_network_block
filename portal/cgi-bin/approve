@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# Approves the calling device.
+#
+# Called by the portal page only after it has successfully fetched a resource
+# from bumped www.google.com -- which can only succeed if the school CA is
+# installed and trusted. So reaching this script is itself the proof; there is
+# nothing to verify here that the network has not already established.
+#
+APPROVED=/etc/school-filter/approved.txt
+IP=$REMOTE_ADDR
+
+printf 'Content-Type: application/json\r\n'
+printf 'Cache-Control: no-store\r\n'
+
+# REMOTE_ADDR is set by uhttpd from the socket, not from anything the client
+# sends, so it cannot be spoofed by a header. Still, refuse anything that is
+# not a plain IPv4 address rather than writing it to a file Squid reads.
+case "$IP" in
+    *[!0-9.]*|"") printf '\r\n{"ok":false,"error":"bad address"}\n'; exit 0 ;;
+esac
+
+mkdir -p "$(dirname "$APPROVED")"
+touch "$APPROVED"
+
+if grep -qxF "$IP" "$APPROVED" 2>/dev/null; then
+    printf '\r\n{"ok":true,"already":true}\n'
+    exit 0
+fi
+
+# Append atomically enough for this purpose; the file is tiny and writes are rare.
+printf '%s\n' "$IP" >> "$APPROVED"
+sync
+printf '\r\n{"ok":true,"already":false}\n'
