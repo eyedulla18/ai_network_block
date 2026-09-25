@@ -49,6 +49,16 @@ file on every lookup, cached for `ttl=30` / `negative_ttl=5`. A `deny_info`
 approach with a static `acl ... "file"` would have needed `squid -k reconfigure`
 from a CGI, and therefore privileges the web server should not have.
 
+**Behind an explicit proxy, the web server sees the proxy, not the device.**
+uhttpd forwards only a three-header whitelist to CGI (`ACCEPT`, `HOST`,
+`USER_AGENT`), so `X-Forwarded-For` never arrives and `REMOTE_ADDR` is the
+router. Left alone, the portal would approve the router and cheerfully report
+success while the device stayed gated. Squid knows the real client, so the URL
+rewriter stamps `?ip=` onto the approve URL, which reaches CGI as
+`QUERY_STRING`. The CGI trusts that only when the request came from the proxy
+address. The rewriter skips a URL that already carries the correct stamp, or
+the redirect target would match again and loop.
+
 **Approval is by IP, not MAC.** Squid sees the client address, not its hardware
 address. Devices with MAC randomization will reappear at the portal after a
 lease change; the automatic check makes that a single tap rather than a

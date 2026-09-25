@@ -57,6 +57,47 @@ for line in fh:lines() do
 end
 fh:close()
 
+-- Portal stamping. Kept out of cases.tsv because that table describes the URL
+-- canonicalizer alone, which is the part worth porting to another language.
+local portal_cases = {
+  -- input url, client ip, expected action, expected url
+  { "http://cert.school/cgi-bin/approve", "192.168.0.80", "REWRITE",
+    "http://cert.school/cgi-bin/approve?ip=192.168.0.80" },
+  { "http://cert.school:8080/cgi-bin/approve", "192.168.0.80", "REWRITE",
+    "http://cert.school:8080/cgi-bin/approve?ip=192.168.0.80" },
+  -- no client address supplied: leave it alone rather than stamping nothing
+  { "http://cert.school/cgi-bin/approve", nil, "SKIP", "-" },
+  { "http://cert.school/cgi-bin/approve", "-", "SKIP", "-" },
+  -- only the approve endpoint, not the rest of the portal
+  { "http://cert.school/", "192.168.0.80", "SKIP", "-" },
+  { "http://cert.school/index.html", "192.168.0.80", "SKIP", "-" },
+  -- a lookalike host must not be stamped
+  { "http://cert.school.evil.example/cgi-bin/approve", "192.168.0.80", "SKIP", "-" },
+  -- loop safety: the stamped URL must pass unchanged the second time
+  { "http://cert.school/cgi-bin/approve?ip=192.168.0.80", "192.168.0.80", "SKIP", "-" },
+  { "http://cert.school:8080/cgi-bin/approve?ip=192.168.0.80", "192.168.0.80", "SKIP", "-" },
+  -- a stale or forged stamp from a different client is corrected, once
+  { "http://cert.school/cgi-bin/approve?ip=10.0.0.9", "192.168.0.80", "REWRITE",
+    "http://cert.school/cgi-bin/approve?ip=192.168.0.80" },
+  -- google is unaffected by the client address being present
+  { "https://www.google.com/search?q=x&udm=50", "192.168.0.80", "REWRITE",
+    "https://www.google.com/search?q=x&udm=14" },
+}
+
+for _, c in ipairs(portal_cases) do
+  total = total + 1
+  local got_action, got_url = udm14.decide(c[1], c[2])
+  got_url = got_url or "-"
+  if got_action ~= c[3] or got_url ~= c[4] then
+    failed = failed + 1
+    failures[#failures + 1] = table.concat({
+      ("portal: %s  (client %s)"):format(c[1], tostring(c[2])),
+      ("expected: %s  %s"):format(c[3], c[4]),
+      ("actual:   %s  %s"):format(got_action, got_url),
+    }, "\n  ")
+  end
+end
+
 for _, f in ipairs(failures) do
   io.write("FAIL\n  ", f, "\n\n")
 end

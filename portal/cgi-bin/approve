@@ -8,7 +8,27 @@
 # nothing to verify here that the network has not already established.
 #
 APPROVED=/etc/school-filter/approved.txt
+
+# Normally REMOTE_ADDR is the device itself. But when a device reaches the
+# portal through an explicit proxy, Squid fetches this CGI on its behalf and
+# REMOTE_ADDR is the router -- so we would approve the router and leave the
+# device gated, with the portal cheerfully reporting success.
+#
+# In that one case, use the last entry of X-Forwarded-For. Squid appends the
+# real client address to whatever the client sent, so the LAST entry is the one
+# Squid observed and cannot be spoofed by the client. Only consult it when the
+# request genuinely came from the proxy.
 IP=$REMOTE_ADDR
+PROXY_ADDR=${PROXY_ADDR:-$(uci -q get network.lan.ipaddr 2>/dev/null)}
+
+# uhttpd forwards only a three-header whitelist to CGI (ACCEPT, HOST,
+# USER_AGENT), so X-Forwarded-For never arrives. Instead the URL rewriter --
+# which Squid calls with the true client address -- stamps ip= onto this URL.
+# Trust it only when the request really came from the proxy.
+if [ -n "$PROXY_ADDR" ] && [ "$REMOTE_ADDR" = "$PROXY_ADDR" ]; then
+    stamped=$(printf '%s' "${QUERY_STRING:-}" | tr '&' '\n' | sed -n 's/^ip=//p' | tail -1)
+    [ -n "$stamped" ] && IP=$stamped
+fi
 
 printf 'Content-Type: application/json\r\n'
 printf 'Cache-Control: no-store\r\n'

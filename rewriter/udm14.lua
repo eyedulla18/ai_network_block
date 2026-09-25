@@ -36,6 +36,14 @@ M.ALLOW = {
 
 M.DEFAULT_MODE = "14"
 
+-- The captive portal's approve endpoint. When a device reaches the portal
+-- through an explicit proxy, the web server sees the proxy's address rather
+-- than the device's, and would approve the wrong host. Squid knows the real
+-- client, so we stamp it onto the URL here; uhttpd always passes a query
+-- string to CGI, unlike the headers it drops.
+M.PORTAL_HOST = "cert.school"
+M.APPROVE_PATH = "/cgi-bin/approve"
+
 --------------------------------------------------------------------------
 -- Encoding helpers
 --------------------------------------------------------------------------
@@ -186,9 +194,22 @@ end
 --   "SKIP"            not a Google search URL, do not touch it
 --   "PASS"            already canonical, do not touch it
 --   "REWRITE", url    redirect the client to url
-function M.decide(url)
+-- client_ip is optional. When Squid supplies it (via url_rewrite_extras) and
+-- the request is for the portal's approve endpoint, it is stamped onto the URL.
+function M.decide(url, client_ip)
   local scheme, host, path, query = split_url(url)
   if not scheme then return "SKIP" end
+
+  if client_ip and client_ip ~= "" and client_ip ~= "-"
+     and host:gsub(":%d+$", ""):lower() == M.PORTAL_HOST
+     and path == M.APPROVE_PATH then
+    local want = "ip=" .. pct_encode(client_ip)
+    -- Loop guard: once the address is stamped, leave the URL alone. Without
+    -- this the redirect target matches again and the browser bounces forever.
+    if query == want then return "SKIP" end
+    return "REWRITE", scheme .. "://" .. host .. path .. "?" .. want
+  end
+
   if not M.is_google_host(host) then return "SKIP" end
   if path ~= "/search" then return "SKIP" end
 
@@ -220,8 +241,10 @@ function M.main()
   for line in io.lines() do
     -- Squid sends: <url> [extras...]. We only need the first field.
     local url = line:match("^(%S+)")
+    -- Squid appends url_rewrite_extras after the URL; ip= is the client.
+    local client_ip = line:match("%sip=(%S+)")
     if url then
-      local action, new_url = M.decide(url)
+      local action, new_url = M.decide(url, client_ip)
       if action == "REWRITE" then
         io.write("OK status=302 url=", new_url, "\n")
       else

@@ -327,7 +327,7 @@ ssl_bump splice all
 
 url_rewrite_program /usr/bin/udm14.lua
 url_rewrite_children 5 startup=1 idle=1 concurrency=0
-url_rewrite_extras "sfm=%{Sec-Fetch-Mode}>h rm=%>rm"
+url_rewrite_extras "sfm=%{Sec-Fetch-Mode}>h rm=%>rm ip=%>a"
 
 acl studentlan src $LAN_CIDR
 $SQUID_PORTAL_CONF
