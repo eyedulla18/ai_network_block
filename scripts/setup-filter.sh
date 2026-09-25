@@ -1,0 +1,329 @@
+#!/bin/sh
+#
+# Idempotent setup for the School AI Filter, run ON the OpenWrt device.
+#
+#   ./scripts/setup-filter.sh
+#
+# Safe to re-run: every step checks before acting. Nothing here is specific to
+# one school; per-site values come from /etc/school-filter.conf (created on
+# first run) or the environment.
+#
+# Targets OpenWrt 25.12.x, which uses apk rather than opkg.
+#
+set -eu
+
+CONF=/etc/school-filter.conf
+[ -f "$CONF" ] && . "$CONF"
+
+WAN_IF=${WAN_IF:-eth0}
+LAN_IF=${LAN_IF:-eth1}
+LAN_ADDR=${LAN_ADDR:-192.168.1.1}
+LAN_MASK=${LAN_MASK:-255.255.255.0}
+LAN_CIDR=${LAN_CIDR:-192.168.1.0/24}
+
+# "server" runs DHCP on the student LAN (normal deployment). Use "off" when the
+# LAN side is bridged onto a network that already has a DHCP server, such as a
+# home router during testing -- two DHCP servers on one segment hand out
+# conflicting leases and break the network for everyone on it.
+LAN_DHCP=${LAN_DHCP:-server}
+
+HTTP_PORT=${HTTP_PORT:-3129}
+HTTPS_PORT=${HTTPS_PORT:-3130}
+CA_DIR=${CA_DIR:-/etc/squid/ssl}
+CA_CN=${CA_CN:-School Filter CA}
+CA_DAYS=${CA_DAYS:-3650}
+SSL_DB=${SSL_DB:-/var/cache/squid/ssl_db}
+SSL_DB_SIZE=${SSL_DB_SIZE:-4MB}
+
+# Marked non-critical deliberately. mbedTLS refuses to parse a CA whose
+# nameConstraints extension is critical (error -0x2562), which breaks clients
+# built against it. See squid/SETUP-NOTES.md for the tradeoff.
+CA_NAME_CONSTRAINTS=${CA_NAME_CONSTRAINTS:-permitted;DNS:.google.com}
+
+SQUID_USER=nobody   # OpenWrt's cache_effective_user, NOT "squid"
+
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+skip() { printf '    (already done) %s\n' "$*"; }
+
+[ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
+
+SRC=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+###########################################################################
+say "Writing $CONF"
+###########################################################################
+if [ ! -f "$CONF" ]; then
+  cat > "$CONF" <<EOF
+# School AI Filter settings. Edit, then re-run scripts/setup-filter.sh.
+WAN_IF=$WAN_IF
+LAN_IF=$LAN_IF
+LAN_ADDR=$LAN_ADDR
+LAN_MASK=$LAN_MASK
+LAN_CIDR=$LAN_CIDR
+LAN_DHCP=$LAN_DHCP
+EOF
+else
+  skip "$CONF exists"
+fi
+
+###########################################################################
+say "Configuring interfaces ($WAN_IF = WAN, $LAN_IF = LAN)"
+###########################################################################
+# The armsr image bridges eth0 into br-lan with a static address, which leaves
+# the box with no route out. Put WAN on its own interface and give LAN the
+# second NIC.
+if [ "$(uci -q get network.wan.device || true)" != "$WAN_IF" ]; then
+  uci set network.wan=interface
+  uci set network.wan.device="$WAN_IF"
+  uci set network.wan.proto='dhcp'
+  uci commit network
+  NET_DIRTY=1
+else
+  skip "wan on $WAN_IF"
+fi
+
+if [ "$(uci -q get network.lan.ipaddr || true)" != "$LAN_ADDR" ] \
+   || [ "$(uci -q get network.lan.device || true)" != "$LAN_IF" ]; then
+  uci set network.lan=interface
+  uci set network.lan.device="$LAN_IF"
+  uci set network.lan.proto='static'
+  uci set network.lan.ipaddr="$LAN_ADDR"
+  uci set network.lan.netmask="$LAN_MASK"
+  uci -q delete network.lan.ports || true
+  uci commit network
+  NET_DIRTY=1
+else
+  skip "lan on $LAN_IF at $LAN_ADDR"
+fi
+
+if [ "$LAN_DHCP" = off ]; then
+  if [ "$(uci -q get dhcp.lan.ignore || true)" != "1" ]; then
+    uci set dhcp.lan.ignore='1'; uci commit dhcp; NET_DIRTY=1
+  else skip "DHCP server disabled on lan"; fi
+else
+  if [ -n "$(uci -q get dhcp.lan.ignore || true)" ]; then
+    uci -q delete dhcp.lan.ignore; uci commit dhcp; NET_DIRTY=1
+  else skip "DHCP server enabled on lan"; fi
+fi
+
+# IPv6 off on the student LAN. Mirroring every rule onto IPv6 is more surface
+# than this deployment needs, and a leak there bypasses the whole filter.
+if [ "$(uci -q get dhcp.lan.dhcpv6 || true)" != "disabled" ]; then
+  uci set dhcp.lan.dhcpv6='disabled'
+  uci set dhcp.lan.ra='disabled'
+  uci -q delete network.lan.ip6assign || true
+  uci commit dhcp; uci commit network
+  NET_DIRTY=1
+else
+  skip "IPv6 disabled on lan"
+fi
+
+if [ "${NET_DIRTY:-0}" = 1 ]; then
+  say "Restarting network"
+  /etc/init.d/network restart
+  sleep 5
+fi
+
+###########################################################################
+say "Installing packages"
+###########################################################################
+apk update >/dev/null 2>&1 || true
+for p in squid lua5.4 openssl-util; do
+  if apk info -e "$p" >/dev/null 2>&1; then skip "$p"; else apk add "$p"; fi
+done
+
+###########################################################################
+say "Generating CA (if absent)"
+###########################################################################
+mkdir -p "$CA_DIR"
+if [ ! -f "$CA_DIR/ca.crt" ]; then
+  openssl req -new -newkey rsa:2048 -sha256 -days "$CA_DAYS" -nodes -x509 \
+    -keyout "$CA_DIR/ca.key" -out "$CA_DIR/ca.crt" \
+    -subj "/CN=$CA_CN" \
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "nameConstraints=$CA_NAME_CONSTRAINTS" >/dev/null 2>&1
+  chmod 600 "$CA_DIR/ca.key"
+  chmod 644 "$CA_DIR/ca.crt"
+  say "CA created. Fingerprint:"
+  openssl x509 -in "$CA_DIR/ca.crt" -noout -fingerprint -sha256
+else
+  skip "CA exists at $CA_DIR/ca.crt"
+fi
+
+###########################################################################
+say "Installing URL rewriter"
+###########################################################################
+if [ -f "$SRC/rewriter/udm14.lua" ]; then
+  # busybox has no install(1)
+  cp "$SRC/rewriter/udm14.lua" /usr/bin/udm14.lua
+  chmod 755 /usr/bin/udm14.lua
+  echo 'https://www.google.com/search?q=selftest&udm=50' | /usr/bin/udm14.lua \
+    | grep -q 'udm=14' && printf '    rewriter self-test OK\n' \
+    || { echo "rewriter self-test FAILED" >&2; exit 1; }
+else
+  echo "rewriter/udm14.lua not found next to this script" >&2; exit 1
+fi
+
+###########################################################################
+say "Installing ssl_db boot hook"
+###########################################################################
+# /var is a symlink to /tmp (tmpfs), so the certificate database is destroyed
+# on every reboot and Squid refuses to start without it. Rebuild it at boot,
+# before Squid. Also clears stale shared memory, which otherwise turns any
+# abnormal exit into a procd crash loop.
+cat > /etc/init.d/school-filter-ssldb <<'INIT'
+#!/bin/sh /etc/rc.common
+# Rebuilds Squid's TLS certificate database, which lives on tmpfs.
+START=49
+start() {
+    . /etc/school-filter.conf 2>/dev/null || true
+    SSL_DB=${SSL_DB:-/var/cache/squid/ssl_db}
+    SSL_DB_SIZE=${SSL_DB_SIZE:-4MB}
+    rm -f /dev/shm/squid-*
+    mkdir -p "$(dirname "$SSL_DB")"
+    if [ ! -d "$SSL_DB" ]; then
+        /usr/lib/squid/security_file_certgen -c -s "$SSL_DB" -M "$SSL_DB_SIZE" >/dev/null 2>&1
+    fi
+    chown -R nobody "$(dirname "$SSL_DB")" /var/log/squid 2>/dev/null || true
+}
+INIT
+chmod 755 /etc/init.d/school-filter-ssldb
+/etc/init.d/school-filter-ssldb enable 2>/dev/null || true
+mkdir -p /var/log/squid
+/etc/init.d/school-filter-ssldb start
+
+###########################################################################
+say "Writing squid.conf (intercept mode)"
+###########################################################################
+cat > /etc/squid/squid.conf <<EOF
+# Generated by scripts/setup-filter.sh -- edits will be overwritten.
+
+http_port $HTTP_PORT intercept
+https_port $HTTPS_PORT intercept ssl-bump \\
+    generate-host-certificates=on dynamic_cert_mem_cache_size=4MB \\
+    tls-cert=$CA_DIR/ca.crt tls-key=$CA_DIR/ca.key
+
+sslcrtd_program /usr/lib/squid/security_file_certgen -s $SSL_DB -M $SSL_DB_SIZE
+sslcrtd_children 4
+
+acl gsearch ssl::server_name .google.com
+
+# peek MUST be restricted to step 1. "ssl_bump peek all" matches again at
+# step 2, and after peeking at step 2 Squid can only splice -- so the bump
+# rule is never reached and every connection is tunnelled, with no error
+# logged anywhere. Verified the hard way; see squid/SETUP-NOTES.md.
+acl step1 at_step SslBump1
+ssl_bump peek step1
+ssl_bump bump gsearch
+ssl_bump splice all
+
+url_rewrite_program /usr/bin/udm14.lua
+url_rewrite_children 5 startup=1 idle=1 concurrency=0
+url_rewrite_extras "sfm=%{Sec-Fetch-Mode}>h rm=%>rm"
+
+acl studentlan src $LAN_CIDR
+http_access allow studentlan
+http_access deny all
+
+cache deny all
+access_log /var/log/squid/access.log squid
+EOF
+
+squid -k parse >/dev/null 2>&1 || { echo "squid.conf failed to parse" >&2; squid -k parse; exit 1; }
+printf '    squid.conf parses clean\n'
+
+###########################################################################
+say "Installing firewall rules"
+###########################################################################
+# Use uci firewall sections, NOT hand-written files in /etc/nftables.d.
+#
+# A chain declared in an include file is created but never jumped to: fw4 only
+# emits "jump dstnat_lan" when a uci redirect exists for that zone. The rules
+# load without error, show up in "nft list chain", and silently never match --
+# counter stays at 0 and every request bypasses the proxy. Verified the hard
+# way. Named uci sections also make this idempotent by construction.
+rm -f /etc/nftables.d/10-school-filter.nft
+
+# Student web traffic to Squid.
+uci -q delete firewall.sf_http || true
+uci set firewall.sf_http=redirect
+uci set firewall.sf_http.name='schoolfilter-http'
+uci set firewall.sf_http.src='lan'
+uci set firewall.sf_http.proto='tcp'
+uci set firewall.sf_http.src_dport="80"
+uci set firewall.sf_http.dest_port="$HTTP_PORT"
+uci set firewall.sf_http.target='DNAT'
+
+uci -q delete firewall.sf_https || true
+uci set firewall.sf_https=redirect
+uci set firewall.sf_https.name='schoolfilter-https'
+uci set firewall.sf_https.src='lan'
+uci set firewall.sf_https.proto='tcp'
+uci set firewall.sf_https.src_dport="443"
+uci set firewall.sf_https.dest_port="$HTTPS_PORT"
+uci set firewall.sf_https.target='DNAT'
+
+# Force all DNS through the local resolver.
+uci -q delete firewall.sf_dns || true
+uci set firewall.sf_dns=redirect
+uci set firewall.sf_dns.name='schoolfilter-dns'
+uci set firewall.sf_dns.src='lan'
+uci add_list firewall.sf_dns.proto='tcp'
+uci add_list firewall.sf_dns.proto='udp'
+uci set firewall.sf_dns.src_dport="53"
+uci set firewall.sf_dns.dest_port="53"
+uci set firewall.sf_dns.target='DNAT'
+
+# Drop QUIC so browsers fall back to TCP, which Squid can intercept.
+uci -q delete firewall.sf_quic || true
+uci set firewall.sf_quic=rule
+uci set firewall.sf_quic.name='schoolfilter-drop-quic'
+uci set firewall.sf_quic.src='lan'
+uci set firewall.sf_quic.dest='*'
+uci set firewall.sf_quic.proto='udp'
+uci set firewall.sf_quic.dest_port="443"
+uci set firewall.sf_quic.target='DROP'
+
+# Drop DNS-over-TLS so it cannot escape the local resolver.
+uci -q delete firewall.sf_dot || true
+uci set firewall.sf_dot=rule
+uci set firewall.sf_dot.name='schoolfilter-drop-dot'
+uci set firewall.sf_dot.src='lan'
+uci set firewall.sf_dot.dest='*'
+uci add_list firewall.sf_dot.proto='tcp'
+uci add_list firewall.sf_dot.proto='udp'
+uci set firewall.sf_dot.dest_port="853"
+uci set firewall.sf_dot.target='DROP'
+
+uci commit firewall
+/etc/init.d/firewall restart >/dev/null 2>&1 || {
+  echo "firewall restart failed" >&2; exit 1; }
+
+# Prove the rules are actually reachable, rather than trusting that they loaded.
+if nft list table inet fw4 2>/dev/null | grep -q "redirect to :$HTTPS_PORT"; then
+  printf '    firewall rules loaded and wired into fw4\n'
+else
+  echo "firewall rules did not appear in the fw4 ruleset" >&2; exit 1
+fi
+
+###########################################################################
+say "Starting Squid"
+###########################################################################
+/etc/init.d/squid enable 2>/dev/null || true
+rm -f /dev/shm/squid-*
+/etc/init.d/squid restart >/dev/null 2>&1 || /etc/init.d/squid start >/dev/null 2>&1 || true
+sleep 6
+if pgrep squid >/dev/null 2>&1; then
+  printf '    squid is running\n'
+else
+  echo "squid did not start. Recent log:" >&2
+  logread | grep -i squid | tail -10 >&2
+  exit 1
+fi
+
+say "Done."
+echo
+echo "CA for students to install:  $CA_DIR/ca.crt"
+echo "Student LAN:                 $LAN_ADDR on $LAN_IF ($LAN_CIDR)"
+echo "Access log:                  /var/log/squid/access.log"
