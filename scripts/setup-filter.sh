@@ -169,6 +169,7 @@ if [ -f "$SRC/rewriter/udm14.lua" ]; then
   # busybox has no install(1)
   cp "$SRC/rewriter/udm14.lua" /usr/bin/udm14.lua
   chmod 755 /usr/bin/udm14.lua
+  [ -s /usr/bin/udm14.lua ] || { echo "udm14.lua copied as an empty file" >&2; exit 1; }
   echo 'https://www.google.com/search?q=selftest&udm=50' | /usr/bin/udm14.lua \
     | grep -q 'udm=14' && printf '    rewriter self-test OK\n' \
     || { echo "rewriter self-test FAILED" >&2; exit 1; }
@@ -402,6 +403,9 @@ if [ -d "$SRC/certpage" ]; then
   cp "$SRC/certpage/index.html" "$WWW/index.html"
   cp "$SRC/certpage/cgi-bin/ca" "$SRC/certpage/cgi-bin/ios" "$WWW/cgi-bin/"
   chmod 755 "$WWW/cgi-bin/ca" "$WWW/cgi-bin/ios"
+  for f in "$WWW/cgi-bin/ca" "$WWW/cgi-bin/ios"; do
+    [ -s "$f" ] || { echo "$f copied as an empty file" >&2; exit 1; }
+  done
 else
   echo "certpage/ not found next to this script" >&2; exit 1
 fi
@@ -485,6 +489,12 @@ else
   logread | grep -i squid | tail -10 >&2
   exit 1
 fi
+
+# Flush everything to disk. An abrupt power loss -- or a VM killed rather than
+# shut down -- can otherwise leave freshly written files at zero length, thanks
+# to ext4 delayed allocation. A zero-byte url_rewrite_program makes Squid
+# crash-loop with "redirector helpers are crashing too rapidly".
+sync
 
 say "Done."
 echo

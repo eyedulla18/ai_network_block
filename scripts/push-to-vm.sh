@@ -4,6 +4,8 @@
 #
 #   ./scripts/push-to-vm.sh              copy, then print the next command
 #   ./scripts/push-to-vm.sh --run        copy and run setup-filter.sh
+#   VM_HOST=192.168.1.50 SSH_PORT=22 ./scripts/push-to-vm.sh --run
+#                                        reach a bridged VM on the LAN instead
 #
 # Needs a root password set on the VM first. At the VM console:
 #
@@ -17,7 +19,7 @@ set -eu
 
 PORT=${SSH_PORT:-2222}
 DEST=${DEST:-/root/school-filter}
-HOST=root@127.0.0.1
+HOST=root@${VM_HOST:-127.0.0.1}
 RUN=no
 
 [ "${1:-}" = "--run" ] && RUN=yes
