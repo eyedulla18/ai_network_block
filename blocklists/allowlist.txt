@@ -1,0 +1,10 @@
+# School AI Filter -- exceptions
+#
+# One domain per line. These resolve normally even if a parent domain appears
+# in ai-sites.txt. dnsmasq matches the most specific rule, so a subdomain here
+# overrides a broader block.
+#
+# Example: block duckduckgo.com but keep the no-AI endpoint usable.
+
+# DuckDuckGo's no-AI search endpoint.
+noai.duckduckgo.com

@@ -1,0 +1,58 @@
+# School AI Filter -- blocked domains
+#
+# One domain per line. Blocking a domain also blocks its subdomains, so
+# "openai.com" covers "chat.openai.com" without a separate entry.
+#
+# Consumed two ways:
+#   - scripts/setup-filter.sh turns this into dnsmasq address= rules
+#   - AdGuard Home can subscribe to the raw file URL directly
+#
+# Exceptions go in allowlist.txt, which wins over anything here.
+#
+# NEVER add google.com or googleapis.com. Blocking either breaks Gmail,
+# YouTube, Classroom and every Google sign-in, including for teachers.
+
+# --- Google AI ------------------------------------------------------------
+gemini.google.com
+gemini.google
+bard.google.com
+aistudio.google.com
+ai.studio
+notebooklm.google.com
+notebooklm.google
+labs.google
+generativelanguage.googleapis.com
+
+# --- Microsoft Copilot ----------------------------------------------------
+# Copilot reachable via bing.com/chat cannot be blocked by DNS; it shares a
+# hostname with ordinary Bing search.
+copilot.microsoft.com
+copilot.cloud.microsoft
+
+# --- Major AI chat services -----------------------------------------------
+chatgpt.com
+openai.com
+claude.ai
+anthropic.com
+duck.ai
+perplexity.ai
+meta.ai
+grok.com
+deepseek.com
+
+# --- Additional services, added 2026-09-25 --------------------------------
+# Not in the original list. Review these before deploying; each is a chat
+# service students are known to use.
+mistral.ai
+character.ai
+poe.com
+you.com
+copilot.github.com
+huggingface.co
+qwen.ai
+kimi.com
+z.ai
+
+# --- Web proxies that would bypass the filter -----------------------------
+# Google Translate will proxy an arbitrary site through *.translate.goog.
+translate.goog
